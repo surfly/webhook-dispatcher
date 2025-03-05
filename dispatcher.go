@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -15,11 +16,20 @@ import (
 )
 
 var (
-	defaultBucketName    = "webhook_events"
-	defaultUserAgent     = "WebhookDispatcher/1.0"
-	defaultReqTimeout    = 10 * time.Second
+	// Bucket name to store queued events
+	defaultBucketName = "webhook_events"
+	// Default user-agent for webhook requests
+	defaultUserAgent = "WebhookDispatcher/1.0"
+	// Default request timeout for webhook requests
+	defaultReqTimeout = 10 * time.Second
+	// Default event cooldown time for failed event delivery
 	defaultEventCooldown = 60 * time.Second
-	defaultConcurrency   = 1
+	// Default concurrency for processing events
+	defaultConcurrency = 2
+	// Default retry schedule for failed events
+	defaultRetrySchedule = []string{"0s", "5s", "10s", "30s", "1m", "30m", "1h", "3h", "6h", "12h", "24h"}
+	// Default maximum retry count for failed events. After this count, the event will be deleted.
+	defaultMaxRetryCount = 30
 )
 
 // WebhookDispatcher manages event delivery.
@@ -39,6 +49,7 @@ type WebhookDispatcher struct {
 	// number of events to process concurrently
 	concurrency int
 
+	logger     *log.Logger
 	queue      chan string
 	inProgress sync.Map
 }
@@ -64,69 +75,114 @@ func NewWebhookDispatcher(db *bbolt.DB, bucketName string) (*WebhookDispatcher, 
 		concurrency:   defaultConcurrency,
 		reqTimeout:    defaultReqTimeout,
 		eventCooldown: defaultEventCooldown,
+		logger:        log.New(io.Discard, "", 0),
 	}
 	d.queue = make(chan string, d.concurrency*2)
 	d.inProgress = sync.Map{}
 	return d, nil
 }
 
-// Start starts the dispatcher's workers and the database monitor.
+// SetUserAgent sets the user-agent for webhook requests.
+func (d *WebhookDispatcher) SetUserAgent(ua string) {
+	d.reqUserAgent = ua
+}
+
+// SetReqTimeout sets the request timeout for webhook requests.
+func (d *WebhookDispatcher) SetReqTimeout(t time.Duration) {
+	d.reqTimeout = t
+}
+
+// SetConcurrency sets the number of events to process concurrently (number of workers).
+func (d *WebhookDispatcher) SetConcurrency(c int) {
+	d.concurrency = c
+}
+
+// SetLogger sets the logger for the dispatcher.
+func (d *WebhookDispatcher) SetLogger(logger *log.Logger) {
+	d.logger = logger
+}
+
+// Start is the entry point for the dispatcher. It starts the workers and monitors the database.
 func (d *WebhookDispatcher) Start() {
-	for range d.concurrency {
-		go d.worker()
+	d.logger.Printf("Starting WebhookDispatcher with %d workers", d.concurrency)
+	for i := range d.concurrency {
+		ctx := context.Background()
+		ctx = context.WithValue(ctx, "workerID", i)
+		ctx = context.WithValue(ctx, "loggerOutput", d.logger.Writer())
+		go d.worker(ctx)
 	}
-	go d.monitorDB()
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "loggerOutput", d.logger.Writer())
+	go d.monitorDB(ctx)
 }
 
 // worker processes webhook tasks.
-func (d *WebhookDispatcher) worker() {
+func (d *WebhookDispatcher) worker(ctx context.Context) {
+	workerID := ctx.Value("workerID").(int)
+	logger := log.New(ctx.Value("loggerOutput").(io.Writer), fmt.Sprintf("[workerID=%d] ", workerID), 0)
+	logger.Println("Worker started")
+	defer logger.Println("Worker stopped")
 	for eventID := range d.queue {
-		// Mark as in progress *before* retrieving from DB
-		if _, loaded := d.inProgress.LoadOrStore(eventID, true); loaded {
-			// Another worker is already processing this event, skip it
-			continue
-		}
+		d.handleEvent(ctx, eventID)
+	}
+}
 
-		event, err := d.getEventFromDB(eventID)
-		if err != nil {
-			log.Printf("ERROR: Retrieving event %s: %v", eventID, err)
-			d.inProgress.Delete(eventID) // Remove from inProgress
-			continue
-		}
+func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
+	logOutput := ctx.Value("loggerOutput").(io.Writer)
+	workerID := ctx.Value("workerID").(int)
+	logger := log.New(logOutput, fmt.Sprintf("[workerID=%d] [eventID=%s] ", workerID, eventID), 0)
 
-		jsonPayload, err := json.Marshal(event.WebhookEvent)
-		if err != nil {
-			log.Printf("ERROR: Encoding payload for %s: %v", event.EventID, err)
-			d.inProgress.Delete(eventID) // Clean up
-			continue
-		}
+	logger.Printf("Processing event")
+	startedAt := time.Now()
 
-		err = d.sendWebhook(event.URL, jsonPayload)
+	defer func() {
+		d.inProgress.Delete(eventID)
+		logger.Printf("[took=%s] Finished processing event", time.Since(startedAt))
+	}()
+
+	// Mark as in progress *before* retrieving from DB
+	if _, loaded := d.inProgress.LoadOrStore(eventID, true); loaded {
+		// Another worker is already processing this event, skip it
+		logger.Println("Skipping event, already in progress")
+		return
+	}
+
+	event, err := d.getEventFromDB(eventID)
+	if err != nil {
+		logger.Printf("Unable to get event from DB: %v", err)
+		return
+	}
+
+	jsonPayload, err := json.Marshal(event.WebhookEvent)
+	if err != nil {
+		logger.Printf("Unable to marshal event: %v", err)
+		return
+	}
+
+	err = d.sendWebhook(event.URL, jsonPayload)
+	if err != nil {
+		logger.Printf("Unable to send webhook to %s: %v", event.URL, err)
+		event.RetryCount++
+		event.LastUpdatedAt = time.Now()
+		nextRetryAt, err := GetNextRetryTime(&event, d.eventCooldown)
 		if err != nil {
-			log.Printf("ERROR: Sending webhook to %s: %v", event.URL, err)
-			event.RetryCount++
-			event.LastUpdatedAt = time.Now()
-			nextRetryAt, err := GetNextRetryTime(&event, d.eventCooldown)
-			if err != nil {
-				log.Printf("ERROR: Getting next retry time for %s: %v", event.EventID, err)
-				if err := d.deleteEventFromDB(eventID); err != nil {
-					log.Printf("ERROR: Deleting event %s: %v", eventID, err)
-				}
-			} else {
-				event.RetryAfter = nextRetryAt
-				if err := d.saveEventInDB(&event); err != nil {
-					log.Printf("ERROR: Saving event %s after retry update: %v", event.EventID, err)
-				}
+			logger.Printf("Unable to get next retry time for %s: %v", event.EventID, err)
+			if err := d.deleteEventFromDB(eventID); err != nil {
+				logger.Printf("Removing event %s: %v", eventID, err)
 			}
 		} else {
-			if err := d.deleteEventFromDB(eventID); err != nil {
-				log.Printf("ERROR: Deleting event %s: %v", eventID, err)
+			event.RetryAfter = nextRetryAt
+			err = d.saveEventInDB(&event)
+			if err != nil {
+				logger.Printf("Unable to save event %s: %v", eventID, err)
 			}
-			log.Printf("Successfully sent webhook to %s", event.URL)
 		}
-
-		// After sending (successful or not), remove from inProgress and update status
-		d.inProgress.Delete(eventID)
+	} else {
+		// Event was successfully sent, delete it from the database
+		if err := d.deleteEventFromDB(eventID); err != nil {
+			logger.Println("Unable to delete event from DB:", err)
+		}
+		logger.Printf("Successfully sent webhook to %s", event.URL)
 	}
 }
 
@@ -141,6 +197,8 @@ func (d *WebhookDispatcher) QuickEnqueue(event WebhookEvent, url string) error {
 		}
 		queuedEvent.EventID = uuid.String()
 	}
+	queuedEvent.MaxRetryCount = defaultMaxRetryCount
+	queuedEvent.RetrySchedule = defaultRetrySchedule
 
 	return d.saveEventInDB(queuedEvent)
 }
@@ -180,7 +238,8 @@ func (d *WebhookDispatcher) saveEventInDB(event *QueuedEvent) error {
 }
 
 // monitorDB monitors the database for new events and sends their IDs to the queue.
-func (d *WebhookDispatcher) monitorDB() {
+func (d *WebhookDispatcher) monitorDB(ctx context.Context) {
+	logger := log.New(ctx.Value("loggerOutput").(io.Writer), "[monitorDB] ", 0)
 	for {
 		// Use a transaction to get a consistent view of the data.
 		err := d.db.View(func(tx *bbolt.Tx) error {
@@ -200,14 +259,13 @@ func (d *WebhookDispatcher) monitorDB() {
 				case d.queue <- eventID:
 					// Send to queue
 				default: //Queue is full
-					log.Printf("Queue is full, cannot send eventID %v", eventID)
 				}
 				return nil
 			})
 		})
 
 		if err != nil {
-			log.Printf("ERROR: Monitoring database: %v", err)
+			logger.Printf("ERROR: Monitoring database: %v", err)
 		}
 
 		time.Sleep(1 * time.Second) // Check for new events every second
