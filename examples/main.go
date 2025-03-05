@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,6 +30,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create WebhookDispatcher: %v", err)
 	}
+
+	D.SetConcurrency(10)
+	D.SetLogger(log.Default())
 
 	// Start the WebhookDispatcher.
 	D.Start()
@@ -60,7 +65,8 @@ func handleGenerateSimpleEvents(w http.ResponseWriter, r *http.Request) {
 			Data:      map[string]interface{}{"message": fmt.Sprintf("Event %d", i+1)},
 		}
 
-		err = D.QuickEnqueue(event, "http://localhost:8008/webhook/?verbose=true")
+		sleepMS, _ := rand.Int(rand.Reader, big.NewInt(5000))
+		err = D.QuickEnqueue(event, fmt.Sprintf("http://localhost:8008/webhook/?verbose=true&sleep=%dms", sleepMS))
 		if err != nil {
 			log.Printf("Failed to enqueue event: %v", err)
 			http.Error(w, "Failed to enqueue event", http.StatusInternalServerError)
