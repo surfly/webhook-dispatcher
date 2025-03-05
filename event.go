@@ -67,8 +67,8 @@ func GetNextRetryTime(queuedEvent *QueuedEvent, delay time.Duration) (time.Time,
 
 // WebhookEvent is the event structure which is sent as a webhook.
 type WebhookEvent struct {
-	Category  string `json:"category"`
-	CreatedAt string `json:"created_at"` // RFC3339
-	EventID   string `json:"event_id"`   // Unique event ID
-	Data      any    `json:"data"`
+	Category  string    `json:"category"`
+	CreatedAt time.Time `json:"created_at"` // RFC3339
+	EventID   string    `json:"event_id"`   // Unique event ID
+	Data      any       `json:"data"`
 }
