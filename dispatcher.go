@@ -2,18 +2,21 @@ package dispatcher
 
 import "go.etcd.io/bbolt"
 
-const BucketName = "webhook_events"
-
 // WebhookDispatcher manages event delivery.
 type WebhookDispatcher struct {
 	db *bbolt.DB
+	// bucketName is the name of the bucket in which events are stored.
+	bucketName []byte
 }
 
 // NewWebhookDispatcher creates a new WebhookDispatcher. Pass *bbolt.DB instance
 // which will be used to store events.
-func NewWebhookDispatcher(db *bbolt.DB) (*WebhookDispatcher, error) {
+func NewWebhookDispatcher(db *bbolt.DB, bucketName string) (*WebhookDispatcher, error) {
+	if bucketName == "" {
+		bucketName = "webhook_events"
+	}
 	err := db.Update(func(tx *bbolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(BucketName))
+		_, err := tx.CreateBucketIfNotExists([]byte(bucketName))
 		return err
 	})
 	if err != nil {
@@ -21,6 +24,7 @@ func NewWebhookDispatcher(db *bbolt.DB) (*WebhookDispatcher, error) {
 	}
 
 	return &WebhookDispatcher{
-		db: db,
+		db:         db,
+		bucketName: []byte(bucketName),
 	}, nil
 }
