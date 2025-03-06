@@ -195,7 +195,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 }
 
 // QuickEnqueue adds an event to the queue with the given URL.
-func (d *WebhookDispatcher) QuickEnqueue(event WebhookEvent, url string) error {
+func (d *WebhookDispatcher) QuickEnqueue(url string, event WebhookEvent) error {
 	queuedEvent := NewQueuedEvent(event, url)
 	if queuedEvent.EventID == "" {
 		// generate a new time-ordered UUID

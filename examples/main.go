@@ -66,7 +66,7 @@ func handleGenerateSimpleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sleepMS, _ := rand.Int(rand.Reader, big.NewInt(5000))
-		err = D.QuickEnqueue(event, fmt.Sprintf("http://localhost:8008/webhook/?verbose=true&sleep=%dms", sleepMS))
+		err = D.QuickEnqueue(fmt.Sprintf("http://localhost:8008/webhook/?verbose=true&sleep=%dms", sleepMS), event)
 		if err != nil {
 			log.Printf("Failed to enqueue event: %v", err)
 			http.Error(w, "Failed to enqueue event", http.StatusInternalServerError)
