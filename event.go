@@ -25,21 +25,18 @@ type QueuedEvent struct {
 	RetrySchedule []string `json:"retry_schedule"`
 	// LastUpdatedAt is the time at which this event was last processed.
 	LastUpdatedAt time.Time `json:"last_updated_at"` // RFC3339
-	// ProcessingFinished is true if the event has been processed.
-	ProcessingFinished bool `json:"processing_finished"`
 }
 
 // NewQueuedEvent creates a new QueuedEvent with the given event and URL.
 func NewQueuedEvent(event WebhookEvent, url string) *QueuedEvent {
 	return &QueuedEvent{
-		WebhookEvent:       event,
-		URL:                url,
-		RetryCount:         0,
-		RetryAfter:         time.Now(),
-		MaxRetryCount:      0,
-		RetrySchedule:      []string{},
-		LastUpdatedAt:      time.Now(),
-		ProcessingFinished: false,
+		WebhookEvent:  event,
+		URL:           url,
+		RetryCount:    0,
+		RetryAfter:    time.Now(),
+		MaxRetryCount: 0,
+		RetrySchedule: []string{},
+		LastUpdatedAt: time.Now(),
 	}
 }
 
