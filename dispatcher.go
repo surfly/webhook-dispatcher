@@ -197,7 +197,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 // QuickEnqueue adds a new webhook event to the queue.
 // - url - is the webhook URL to which this event should be sent.
 // - category - is the category of the event.
-// - data - is the data to be sent in the webhook payload.
+// - data - is the data to be sent in the webhook payload. Should be JSON serializable.
 func (d *WebhookDispatcher) QuickEnqueue(url string, category string, data any) error {
 	// Generate a new time-ordered UUID
 	uuid, err := uuid.NewV7()
@@ -215,6 +215,11 @@ func (d *WebhookDispatcher) QuickEnqueue(url string, category string, data any) 
 	queuedEvent := NewQueuedEvent(event, url)
 
 	return d.saveEventInDB(queuedEvent)
+}
+
+// Enqueue adds a new webhook event to the queue. Make sure eventID is unique.
+func (d *WebhookDispatcher) Enqueue(event *QueuedEvent) error {
+	return d.saveEventInDB(event)
 }
 
 // getEventFromDB retrieves the event from the database.
