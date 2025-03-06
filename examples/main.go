@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	dispatcher "github.com/surfly/webhook-dispatcher"
 	"go.etcd.io/bbolt"
@@ -59,14 +58,12 @@ func handleGenerateSimpleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i := 0; i < count; i++ {
-		event := dispatcher.WebhookEvent{
-			Category:  "simple",
-			CreatedAt: time.Now(),
-			Data:      map[string]interface{}{"message": fmt.Sprintf("Event %d", i+1)},
-		}
-
 		sleepMS, _ := rand.Int(rand.Reader, big.NewInt(5000))
-		err = D.QuickEnqueue(fmt.Sprintf("http://localhost:8008/webhook/?verbose=true&sleep=%dms", sleepMS), event)
+		err = D.QuickEnqueue(
+			fmt.Sprintf("http://localhost:8008/webhook/?verbose=true&sleep=%dms", sleepMS),
+			"new_category",
+			map[string]any{"message": fmt.Sprintf("Event %d", i+1)},
+		)
 		if err != nil {
 			log.Printf("Failed to enqueue event: %v", err)
 			http.Error(w, "Failed to enqueue event", http.StatusInternalServerError)
