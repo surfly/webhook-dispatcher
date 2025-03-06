@@ -162,10 +162,11 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 		return
 	}
 
+	logger.Printf("Sending webhook to %s", event.URL)
 	err = d.sendWebhook(event.URL, jsonPayload)
 	if err != nil {
-		logger.Printf("Unable to send webhook to %s: %v", event.URL, err)
 		event.RetryCount++
+		logger.Printf("[attempt=%d] Unable to send [send_error=%s]", event.RetryCount, err)
 		nextRetryAt, err := GetNextRetryTime(&event, d.eventCooldown)
 		if err != nil {
 			logger.Printf("Unable to get next retry time for %s: %v", event.EventID, err)
@@ -174,6 +175,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 			}
 		} else {
 			event.RetryAfter = nextRetryAt
+			logger.Printf("Next retry in %s", nextRetryAt.Sub(time.Now()))
 			err = d.saveEventInDB(&event)
 			if err != nil {
 				logger.Printf("Unable to save event %s: %v", eventID, err)
