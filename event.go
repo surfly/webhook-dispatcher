@@ -23,8 +23,6 @@ type QueuedEvent struct {
 	// durations in the format of Go's time.ParseDuration.
 	// For example, "1s", "1m", "1h", "1d", "1w", "1M", "1y".
 	RetrySchedule []string `json:"retry_schedule"`
-	// LastUpdatedAt is the time at which this event was last processed.
-	LastUpdatedAt time.Time `json:"last_updated_at"` // RFC3339
 }
 
 // NewQueuedEvent creates a new QueuedEvent with the given event and URL.
@@ -36,7 +34,6 @@ func NewQueuedEvent(event WebhookEvent, url string) *QueuedEvent {
 		RetryAfter:    time.Now(),
 		MaxRetryCount: 0,
 		RetrySchedule: []string{},
-		LastUpdatedAt: time.Now(),
 	}
 }
 

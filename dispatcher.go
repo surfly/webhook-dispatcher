@@ -166,7 +166,6 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	if err != nil {
 		logger.Printf("Unable to send webhook to %s: %v", event.URL, err)
 		event.RetryCount++
-		event.LastUpdatedAt = time.Now()
 		nextRetryAt, err := GetNextRetryTime(&event, d.eventCooldown)
 		if err != nil {
 			logger.Printf("Unable to get next retry time for %s: %v", event.EventID, err)
