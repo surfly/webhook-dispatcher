@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type QueuedEvent struct {
 	ProcessingFinished bool `json:"processing_finished"`
 }
 
+// NewQueuedEvent creates a new QueuedEvent with the given event and URL.
 func NewQueuedEvent(event WebhookEvent, url string) *QueuedEvent {
 	return &QueuedEvent{
 		WebhookEvent:       event,
@@ -41,22 +43,25 @@ func NewQueuedEvent(event WebhookEvent, url string) *QueuedEvent {
 	}
 }
 
+// GetNextRetryTime returns the next retry time for the given event.
 func GetNextRetryTime(queuedEvent *QueuedEvent, delay time.Duration) (time.Time, error) {
 	// Check if the max retry count has been reached
 	if queuedEvent.MaxRetryCount > 0 && queuedEvent.RetryCount >= queuedEvent.MaxRetryCount {
 		return time.Time{}, fmt.Errorf("max retry count reached")
 	}
 
-	// There is no schedule, retry after the default delay
-	if len(queuedEvent.RetrySchedule) == 0 {
-		return time.Now().Add(delay), nil
-	}
+	if len(queuedEvent.RetrySchedule) > 0 {
+		retryIndex := queuedEvent.RetryCount
 
-	if len(queuedEvent.RetrySchedule) > queuedEvent.RetryCount {
-		customDelay := queuedEvent.RetrySchedule[queuedEvent.RetryCount]
+		// Check if the retry index is out of bounds
+		if len(queuedEvent.RetrySchedule) <= retryIndex {
+			retryIndex = len(queuedEvent.RetrySchedule) - 1
+		}
+
+		customDelay := queuedEvent.RetrySchedule[retryIndex]
 		parsed, err := time.ParseDuration(customDelay)
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 		} else {
 			return time.Now().Add(parsed), nil
 		}
