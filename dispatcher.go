@@ -122,7 +122,7 @@ func (d *WebhookDispatcher) Start() {
 // worker processes webhook tasks.
 func (d *WebhookDispatcher) worker(ctx context.Context) {
 	workerID := ctx.Value("workerID").(int)
-	logger := log.New(d.logger.Writer(), fmt.Sprintf("[workerID=%d] ", workerID), d.logger.Flags())
+	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[workerID=%d] ", d.logger.Prefix(), workerID), d.logger.Flags())
 	logger.Println("Worker started")
 	defer logger.Println("Worker stopped")
 	for eventID := range d.sendEventQueue {
@@ -141,7 +141,7 @@ func (d *WebhookDispatcher) deleteEvent(eventID string, reason string) {
 
 func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	workerID := ctx.Value("workerID").(int)
-	logger := log.New(d.logger.Writer(), fmt.Sprintf("[workerID=%d] [eventID=%s] ", workerID, eventID), d.logger.Flags())
+	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[workerID=%d] [eventID=%s] ", d.logger.Prefix(), workerID, eventID), d.logger.Flags())
 
 	logger.Printf("Processing event")
 	startedAt := time.Now()
@@ -247,7 +247,7 @@ func (d *WebhookDispatcher) saveEventInDB(event *QueuedEvent) error {
 
 // monitorDB monitors the database for new events and sends their IDs to the queue.
 func (d *WebhookDispatcher) monitorDB() {
-	logger := log.New(d.logger.Writer(), "[kind=monitorDB] ", d.logger.Flags())
+	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[kind=monitorDB] ", d.logger.Prefix()), d.logger.Flags())
 	logger.Println("Monitoring database for new events")
 	for {
 		err := d.db.View(func(tx *bbolt.Tx) error {
@@ -311,7 +311,7 @@ func (d *WebhookDispatcher) sendWebhook(url string, payload []byte) error {
 
 // deleteWorker listens for event IDs on the deleteQueue and deletes them from the database.
 func (d *WebhookDispatcher) deleteWorker() {
-	logger := log.New(d.logger.Writer(), "[kind=deleteWorker] ", d.logger.Flags())
+	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[kind=deleteWorker] ", d.logger.Prefix()), d.logger.Flags())
 	logger.Println("Delete worker started")
 	for eventID := range d.deleteEventQueue {
 		err := d.deleteEventFromDB(eventID)
