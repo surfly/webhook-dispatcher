@@ -194,19 +194,25 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	}
 }
 
-// QuickEnqueue adds an event to the queue with the given URL.
-func (d *WebhookDispatcher) QuickEnqueue(url string, event WebhookEvent) error {
-	queuedEvent := NewQueuedEvent(event, url)
-	if queuedEvent.EventID == "" {
-		// generate a new time-ordered UUID
-		uuid, err := uuid.NewV7()
-		if err != nil {
-			return err
-		}
-		queuedEvent.EventID = uuid.String()
+// QuickEnqueue adds a new webhook event to the queue.
+// - url - is the webhook URL to which this event should be sent.
+// - category - is the category of the event.
+// - data - is the data to be sent in the webhook payload.
+func (d *WebhookDispatcher) QuickEnqueue(url string, category string, data any) error {
+	// Generate a new time-ordered UUID
+	uuid, err := uuid.NewV7()
+	if err != nil {
+		return err
 	}
-	queuedEvent.MaxRetryCount = defaultMaxRetryCount
-	queuedEvent.RetrySchedule = defaultRetrySchedule
+
+	event := WebhookEvent{
+		Category:  category,
+		CreatedAt: time.Now(),
+		Data:      data,
+		EventID:   uuid.String(),
+	}
+
+	queuedEvent := NewQueuedEvent(event, url)
 
 	return d.saveEventInDB(queuedEvent)
 }

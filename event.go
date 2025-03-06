@@ -31,8 +31,8 @@ func NewQueuedEvent(event WebhookEvent, url string) *QueuedEvent {
 		URL:           url,
 		RetryCount:    0,
 		RetryAfter:    time.Now(),
-		MaxRetryCount: 0,
-		RetrySchedule: []string{},
+		MaxRetryCount: defaultMaxRetryCount,
+		RetrySchedule: defaultRetrySchedule,
 	}
 }
 
