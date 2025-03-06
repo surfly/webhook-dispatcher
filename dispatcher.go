@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/klauspost/compress/zstd"
 	"go.etcd.io/bbolt"
 )
 
@@ -33,6 +34,9 @@ var (
 
 	// monitorDBInterval is the interval for monitoring the database for new events.
 	monitorDBInterval = 1 * time.Second
+
+	// compressionThreshold is the size threshold for compressing the payload.
+	compressionThreshold = 1024 // 1KB
 )
 
 // WebhookDispatcher manages event delivery.
@@ -301,6 +305,19 @@ func (d *WebhookDispatcher) monitorDB() {
 }
 
 func (d *WebhookDispatcher) sendWebhook(url string, payload []byte) error {
+	compressed := false
+	if len(payload) > compressionThreshold {
+		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
+		if err != nil {
+			return fmt.Errorf("error creating zstd encoder: %w", err)
+		}
+		payload = encoder.EncodeAll(payload, nil)
+		if err := encoder.Close(); err != nil {
+			return fmt.Errorf("error closing zstd encoder: %w", err)
+		}
+		compressed = true
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), d.reqTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
@@ -309,6 +326,10 @@ func (d *WebhookDispatcher) sendWebhook(url string, payload []byte) error {
 	}
 	req.Header.Set("User-Agent", d.reqUserAgent)
 	req.Header.Set("Content-Type", "application/json")
+	if compressed {
+		req.Header.Set("Content-Encoding", "zstd")
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error sending request: %w", err)
