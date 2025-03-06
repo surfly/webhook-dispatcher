@@ -2,7 +2,6 @@ package dispatcher
 
 import (
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -55,10 +54,9 @@ func GetNextRetryTime(queuedEvent *QueuedEvent, delay time.Duration) (time.Time,
 		customDelay := queuedEvent.RetrySchedule[retryIndex]
 		parsed, err := time.ParseDuration(customDelay)
 		if err != nil {
-			log.Println(err)
-		} else {
-			return time.Now().Add(parsed), nil
+			return time.Time{}, fmt.Errorf("failed to parse retry schedule: %w", err)
 		}
+		return time.Now().Add(parsed), nil
 	}
 	return time.Now().Add(delay), nil
 
