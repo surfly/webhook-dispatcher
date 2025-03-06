@@ -30,6 +30,9 @@ var (
 	defaultRetrySchedule = []string{"0s", "5s", "10s", "30s", "1m", "30m", "1h", "3h", "6h", "12h", "24h"}
 	// Default maximum retry count for failed events. After this count, the event will be deleted.
 	defaultMaxRetryCount = 30
+
+	// monitorDBInterval is the interval for monitoring the database for new events.
+	monitorDBInterval = 1 * time.Second
 )
 
 // WebhookDispatcher manages event delivery.
@@ -241,15 +244,9 @@ func (d *WebhookDispatcher) saveEventInDB(event *QueuedEvent) error {
 func (d *WebhookDispatcher) monitorDB(ctx context.Context) {
 	logger := log.New(ctx.Value("loggerOutput").(io.Writer), "[monitorDB] ", 0)
 	for {
-		// Use a transaction to get a consistent view of the data.
 		err := d.db.View(func(tx *bbolt.Tx) error {
-			b := tx.Bucket([]byte(d.bucketName))
-			if b == nil {
-				return nil // No events bucket, nothing to do.
-			}
-
 			// Iterate over all keys (event IDs) in the bucket.
-			return b.ForEach(func(k, v []byte) error {
+			return tx.Bucket([]byte(d.bucketName)).ForEach(func(k, v []byte) error {
 				eventID := string(k) // Convert key to string
 				// Check if the event is already in progress
 				if _, loaded := d.inProgress.Load(eventID); loaded {
@@ -258,7 +255,7 @@ func (d *WebhookDispatcher) monitorDB(ctx context.Context) {
 				select {
 				case d.queue <- eventID:
 					// Send to queue
-				default: //Queue is full
+				default: // Queue is full
 				}
 				return nil
 			})
@@ -268,7 +265,7 @@ func (d *WebhookDispatcher) monitorDB(ctx context.Context) {
 			logger.Printf("ERROR: Monitoring database: %v", err)
 		}
 
-		time.Sleep(1 * time.Second) // Check for new events every second
+		time.Sleep(monitorDBInterval)
 	}
 }
 
