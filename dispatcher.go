@@ -249,10 +249,23 @@ func (d *WebhookDispatcher) monitorDB(ctx context.Context) {
 			// Iterate over all keys (event IDs) in the bucket.
 			return tx.Bucket([]byte(d.bucketName)).ForEach(func(k, v []byte) error {
 				eventID := string(k) // Convert key to string
-				// Check if the event is already in progress
+
+				// Check if the event is already being processed by a worker.
 				if _, loaded := d.inProgress.Load(eventID); loaded {
 					return nil // Skip if already in progress
 				}
+
+				// Check if it is time to send the event (retry after time has passed).
+				var event QueuedEvent
+				if err := json.Unmarshal(v, &event); err != nil {
+					logger.Printf("Unable to unmarshal event: %v", err)
+					return nil
+				}
+
+				if event.RetryAfter.After(time.Now()) {
+					return nil // Skip if not ready to be sent
+				}
+
 				select {
 				case d.queue <- eventID:
 					// Send to queue
