@@ -28,7 +28,7 @@ var (
 	// Default concurrency for processing events
 	defaultConcurrency = 2
 	// Default retry schedule for failed events
-	defaultRetrySchedule = []string{"0s", "5s", "10s", "30s", "1m", "30m", "1h", "3h", "6h", "12h", "24h"}
+	defaultRetrySchedule = []string{"0s", "5s", "10s", "30s", "1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "24h"}
 	// Default maximum retry count for failed events. After this count, the event will be deleted.
 	defaultMaxRetryCount = 30
 
