@@ -58,9 +58,9 @@ func handleGenerateSimpleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i := 0; i < count; i++ {
-		sleepMS, _ := rand.Int(rand.Reader, big.NewInt(5000))
+		sleepMS, _ := rand.Int(rand.Reader, big.NewInt(2000))
 		err = D.QuickEnqueue(
-			fmt.Sprintf("http://localhost:8008/webhook/?verbose=true&sleep=%dms", sleepMS),
+			fmt.Sprintf("http://localhost:8008/webhook/%d/?verbose=false&sleep=%dms", i, sleepMS),
 			"new_category",
 			map[string]any{"message": fmt.Sprintf("Event %d", i+1)},
 		)
