@@ -58,8 +58,7 @@ type WebhookDispatcher struct {
 
 	logger *log.Logger
 
-	sendEventQueue   chan string
-	deleteEventQueue chan string
+	sendEventQueue chan string
 
 	inProgress sync.Map
 
@@ -97,7 +96,6 @@ func NewWebhookDispatcher(db *bbolt.DB, bucketName string) (*WebhookDispatcher, 
 	}
 	d.sendEventQueue = make(chan string, d.concurrency*2)
 	d.inProgress = sync.Map{}
-	d.deleteEventQueue = make(chan string, d.concurrency*2)
 	return d, nil
 }
 
@@ -130,7 +128,6 @@ func (d *WebhookDispatcher) Start() {
 		go d.worker(ctx)
 	}
 	go d.monitorDB()
-	go d.deleteWorker()
 }
 
 // worker processes webhook tasks.
@@ -153,20 +150,6 @@ func (d *WebhookDispatcher) worker(ctx context.Context) {
 			}
 			d.handleEvent(ctx, eventID)
 		}
-	}
-}
-
-func (d *WebhookDispatcher) deleteEvent(eventID string, reason string) {
-	d.logger.Printf("[eventID=%s] [reason=%s] Scheduled for deletion", eventID, reason)
-
-	// Check if context is done or use a non-blocking send to avoid panic on closed channel
-	select {
-	case <-d.ctx.Done():
-		return
-	case d.deleteEventQueue <- eventID: // Send event ID to delete queue
-		// Successfully sent to queue
-	default:
-		d.logger.Println(fmt.Sprintf("[eventID=%s] Delete queue is full, unable to enqueue event for deletion", eventID))
 	}
 }
 
@@ -198,7 +181,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	jsonPayload, err := json.Marshal(event.WebhookEvent)
 	if err != nil {
 		logger.Printf("Unable to marshal event: %v", err)
-		d.deleteEvent(eventID, "Unable to marshal event")
+		d.deleteEventFromDB(eventID)
 		return
 	}
 
@@ -210,7 +193,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 		nextRetryAt, err := GetNextRetryTime(&event, d.eventCooldown)
 		if err != nil {
 			logger.Printf("Unable to get next retry time for %s: %v", event.EventID, err)
-			d.deleteEvent(eventID, "Unable to get next retry time")
+			d.deleteEventFromDB(eventID)
 		} else {
 			event.RetryAfter = nextRetryAt
 			logger.Printf("Next retry in %s", nextRetryAt.Sub(time.Now()))
@@ -221,7 +204,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 		}
 	} else {
 		logger.Printf("Successfully sent webhook to %s", event.URL)
-		d.deleteEvent(eventID, "Successfully sent webhook")
+		d.deleteEventFromDB(eventID)
 	}
 }
 
@@ -314,7 +297,7 @@ func (d *WebhookDispatcher) monitorDB() {
 					var event QueuedEvent
 					if err := json.Unmarshal(v, &event); err != nil {
 						logger.Printf("Unable to unmarshal event: %v", err)
-						d.deleteEvent(eventID, "Unable to unmarshal event")
+						d.deleteEventFromDB(eventID)
 						return nil
 					}
 
@@ -377,29 +360,6 @@ func (d *WebhookDispatcher) sendWebhook(url string, payload []byte) error {
 	return fmt.Errorf("error: received status code %d", resp.StatusCode)
 }
 
-// deleteWorker listens for event IDs on the deleteQueue and deletes them from the database.
-func (d *WebhookDispatcher) deleteWorker() {
-	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[kind=deleteWorker] ", d.logger.Prefix()), d.logger.Flags())
-	logger.Println("Delete worker started")
-
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case eventID, ok := <-d.deleteEventQueue:
-			if !ok {
-				return
-			}
-			err := d.deleteEventFromDB(eventID)
-			if err != nil {
-				logger.Printf("[eventID=%s] Unable to delete event DB: %v", eventID, err)
-			} else {
-				logger.Printf("[eventID=%s] Deleted event from DB", eventID)
-			}
-		}
-	}
-}
-
 // Stop gracefully shuts down the dispatcher.
 func (d *WebhookDispatcher) Stop() {
 	d.logger.Println("Stopping WebhookDispatcher...")
@@ -412,7 +372,6 @@ func (d *WebhookDispatcher) Stop() {
 
 	// Now it's safe to close the channels since no workers are running
 	close(d.sendEventQueue)
-	close(d.deleteEventQueue)
 
 	d.logger.Println("WebhookDispatcher stopped")
 }

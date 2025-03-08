@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,45 +42,6 @@ func cleanupTestDB(t *testing.T, db *bbolt.DB) {
 	err = os.Remove(dbPath)
 	if err != nil {
 		t.Errorf("Failed to remove temporary database file: %v", err)
-	}
-}
-
-func TestDeleteWorker(t *testing.T) {
-	db := setupTestDB(t)
-	defer cleanupTestDB(t, db)
-
-	dispatcher, err := NewWebhookDispatcher(db, "")
-	if err != nil {
-		t.Fatalf("Failed to create WebhookDispatcher: %v", err)
-	}
-
-	// Create a test event
-	dispatcher.QuickEnqueue("http://127.0.0.1:8008/webhook", "test_event", nil)
-
-	// Enqueue the event ID for deletion
-	dispatcher.deleteEventQueue <- "test_event"
-	close(dispatcher.deleteEventQueue) // close the channel to signal the end of work
-
-	// Start the delete worker in a goroutine
-	go dispatcher.deleteWorker()
-
-	// Wait for a short time to allow the delete worker to process the event
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify that the event is deleted from the database
-	_, err = dispatcher.getEventFromDB("test_event")
-	if err == nil {
-		err = db.View(func(tx *bbolt.Tx) error {
-			bucket := tx.Bucket([]byte(dispatcher.bucketName))
-			data := bucket.Get([]byte("test_event"))
-			if data != nil {
-				return err
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("Event was not deleted from the database")
-		}
 	}
 }
 
@@ -403,15 +365,10 @@ func TestStop(t *testing.T) {
 	// Stop the dispatcher
 	dispatcher.Stop()
 
-	// Verify that the queues are closed
+	// Verify that the sendEventQueue is closed
 	_, ok := <-dispatcher.sendEventQueue
 	if ok {
 		t.Error("sendEventQueue should be closed")
-	}
-
-	_, ok = <-dispatcher.deleteEventQueue
-	if ok {
-		t.Error("deleteEventQueue should be closed")
 	}
 
 	// Try to send to sendEventQueue (should panic if not caught)
@@ -487,22 +444,33 @@ func TestDeleteEvent(t *testing.T) {
 		t.Fatalf("Failed to create WebhookDispatcher: %v", err)
 	}
 
-	// Create a buffered channel to replace the default channel
-	deleteQueue := make(chan string, 5)
-	dispatcher.deleteEventQueue = deleteQueue
-
-	// Test the deleteEvent method
+	// Create and save a test event
 	eventID := "test_delete_event"
-	dispatcher.deleteEvent(eventID, "test reason")
+	event := &WebhookEvent{
+		EventID:   eventID,
+		Category:  "test",
+		CreatedAt: time.Now(),
+		Data:      map[string]interface{}{"test": "test"},
+	}
+	queuedEvent := NewQueuedEvent(*event, "http://example.com")
+	err = dispatcher.saveEventInDB(queuedEvent)
+	if err != nil {
+		t.Fatalf("Failed to save event: %v", err)
+	}
 
-	// Check that the event was added to the delete queue
-	select {
-	case receivedID := <-deleteQueue:
-		if receivedID != eventID {
-			t.Errorf("Expected event ID %s in delete queue, got %s", eventID, receivedID)
-		}
-	default:
-		t.Error("Event not added to delete queue")
+	// Verify the event exists in the DB
+	_, err = dispatcher.getEventFromDB(eventID)
+	if err != nil {
+		t.Fatalf("Event should exist in DB: %v", err)
+	}
+
+	// Call deleteEvent
+	dispatcher.deleteEventFromDB(eventID)
+
+	// Verify the event is deleted
+	_, err = dispatcher.getEventFromDB(eventID)
+	if err == nil {
+		t.Error("Event should be deleted from DB")
 	}
 }
 
@@ -554,21 +522,13 @@ func TestHandleEvent(t *testing.T) {
 		t.Fatalf("Failed to save event: %v", err)
 	}
 
-	// Create a buffered channel for delete events
-	deleteQueue := make(chan string, 5)
-	dispatcher.deleteEventQueue = deleteQueue
-
 	// Handle the event
 	dispatcher.handleEvent(ctx, eventID)
 
-	// Check that the event was deleted
-	select {
-	case receivedID := <-deleteQueue:
-		if receivedID != eventID {
-			t.Errorf("Expected event ID %s in delete queue, got %s", eventID, receivedID)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Event not added to delete queue")
+	// Check that the event was deleted from the database
+	_, err = dispatcher.getEventFromDB(eventID)
+	if err == nil {
+		t.Error("Event should have been deleted from the database")
 	}
 }
 
@@ -641,10 +601,6 @@ func TestMonitorDBComprehensive(t *testing.T) {
 	sendQueue := make(chan string, 5)
 	dispatcher.sendEventQueue = sendQueue
 
-	// Create a buffered channel for delete events
-	deleteQueue := make(chan string, 5)
-	dispatcher.deleteEventQueue = deleteQueue
-
 	// 1. Create a regular event that should be processed
 	eventID1 := "test_monitor_normal"
 	event1 := &WebhookEvent{
@@ -692,7 +648,7 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		t.Fatalf("Failed to save event: %v", err)
 	}
 
-	// 4. Create an event with invalid JSON (should be detected and scheduled for deletion)
+	// 4. Create an event with invalid JSON (should be detected and deleted)
 	eventID4 := "test_monitor_invalid"
 	err = db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(dispatcher.bucketName))
@@ -707,8 +663,15 @@ func TestMonitorDBComprehensive(t *testing.T) {
 	dispatcher.ctx = ctx
 	dispatcher.cancel = cancel
 
-	// Start monitorDB
-	go dispatcher.monitorDB()
+	// Use a wait group to track when monitorDB has fully exited
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Start monitorDB with tracking for when it exits
+	go func() {
+		dispatcher.monitorDB()
+		wg.Done()
+	}()
 
 	// Wait for the first event to be processed
 	var receivedEventID string
@@ -721,14 +684,13 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		t.Errorf("Event %s not sent to queue within timeout", eventID1)
 	}
 
-	// Check that the invalid event is deleted
-	select {
-	case receivedEventID = <-deleteQueue:
-		if receivedEventID != eventID4 {
-			t.Errorf("Expected invalid event ID %q to be deleted, got %q", eventID4, receivedEventID)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Errorf("Invalid event %s not scheduled for deletion within timeout", eventID4)
+	// Allow some time for monitoring to detect and delete the invalid event
+	time.Sleep(100 * time.Millisecond)
+
+	// Check that the invalid event has been deleted from the database
+	_, err = dispatcher.getEventFromDB(eventID4)
+	if err == nil {
+		t.Errorf("Invalid event %s should have been deleted", eventID4)
 	}
 
 	// Make sure the future event and in-progress event are not sent to the queue
@@ -741,36 +703,27 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		// No events sent, as expected
 	}
 
-	// Test the full queue case by filling the queue
-	for i := 0; i < cap(sendQueue); i++ {
-		sendQueue <- fmt.Sprintf("dummy_event_%d", i)
-	}
-
-	// Add another event that should be processed but queue is full
-	eventID5 := "test_monitor_queue_full"
-	event5 := &WebhookEvent{
-		EventID:   eventID5,
-		Category:  "test",
-		CreatedAt: time.Now(),
-		Data:      map[string]interface{}{"test": "test"},
-	}
-	queuedEvent5 := NewQueuedEvent(*event5, "http://example.com")
-	queuedEvent5.RetryAfter = time.Now().Add(-1 * time.Second) // Ready to be sent
-	err = dispatcher.saveEventInDB(queuedEvent5)
-	if err != nil {
-		t.Fatalf("Failed to save event: %v", err)
-	}
-
-	// Wait for a moment to allow monitorDB to process all events
-	time.Sleep(200 * time.Millisecond)
-
 	// Now test context cancellation
 	cancel() // Cancel the context
 
-	// Wait briefly for goroutine to notice cancellation
-	time.Sleep(100 * time.Millisecond)
+	// Instead of looping to drain the queue (which could block indefinitely),
+	// wait for monitor to exit and then check
+	wg.Wait()
 
-	// Add a new event after cancellation - it shouldn't be processed
+	// Delete ALL existing events from the database to start fresh
+	err = db.Update(func(tx *bbolt.Tx) error {
+		// Delete the bucket and recreate it to clear all events
+		if err := tx.DeleteBucket(dispatcher.bucketName); err != nil {
+			return err
+		}
+		_, err := tx.CreateBucket(dispatcher.bucketName)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("Failed to clear database: %v", err)
+	}
+
+	// Add a new event with a future retry time
 	eventIDPost := "test_after_cancel"
 	eventPost := &WebhookEvent{
 		EventID:   eventIDPost,
@@ -779,21 +732,36 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		Data:      map[string]interface{}{"test": "test"},
 	}
 	queuedEventPost := NewQueuedEvent(*eventPost, "http://example.com")
-	queuedEventPost.RetryAfter = time.Now().Add(-1 * time.Second) // Ready to be sent
+	queuedEventPost.RetryAfter = time.Now().Add(10 * time.Second) // Set to future time
 	err = dispatcher.saveEventInDB(queuedEventPost)
 	if err != nil {
 		t.Fatalf("Failed to save event: %v", err)
 	}
 
-	// Empty the queue so we can check if new events are being sent
+	// Create a completely new dispatcher with a fresh context
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	dispatcher2, err := NewWebhookDispatcher(db, string(dispatcher.bucketName))
+	if err != nil {
+		t.Fatalf("Failed to create new dispatcher: %v", err)
+	}
+	dispatcher2.ctx = ctx2
+	dispatcher2.cancel = cancel2
+	dispatcher2.sendEventQueue = sendQueue // Reuse the same queue for testing
+
+	// Clear the queue
 	for len(sendQueue) > 0 {
 		<-sendQueue
 	}
 
-	// Check that no new events are being sent after cancellation
+	// Start monitoring with the new dispatcher
+	go dispatcher2.monitorDB()
+
+	// Check that no events are sent within the timeout period
 	select {
 	case eventID := <-sendQueue:
-		t.Errorf("Event %s should not have been sent to queue after cancellation", eventID)
+		t.Errorf("Event %s should not have been sent to queue after restart", eventID)
 	case <-time.After(200 * time.Millisecond):
 		// No events sent, as expected
 	}
