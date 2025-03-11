@@ -186,7 +186,9 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	jsonPayload, err := json.Marshal(event.WebhookEvent)
 	if err != nil {
 		logger.Printf("Unable to marshal event: %v", err)
-		d.deleteEventFromDB(eventID)
+		if err = d.deleteEventFromDB(eventID); err != nil {
+			logger.Printf("Error deleting event from DB: %v", err)
+		}
 		return
 	}
 
@@ -198,7 +200,9 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 		nextRetryAt, err := GetNextRetryTime(&event, d.eventCooldown)
 		if err != nil {
 			logger.Printf("Unable to get next retry time for %s: %v", event.EventID, err)
-			d.deleteEventFromDB(eventID)
+			if err = d.deleteEventFromDB(eventID); err != nil {
+				logger.Printf("Error deleting event from DB: %v", err)
+			}
 		} else {
 			event.RetryAfter = nextRetryAt
 			logger.Printf("Next retry in %s", nextRetryAt.Sub(time.Now()))
@@ -209,7 +213,9 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 		}
 	} else {
 		logger.Printf("Successfully sent webhook to %s", event.URL)
-		d.deleteEventFromDB(eventID)
+		if err = d.deleteEventFromDB(eventID); err != nil {
+			logger.Printf("Error deleting event from DB: %v", err)
+		}
 	}
 }
 
@@ -302,7 +308,9 @@ func (d *WebhookDispatcher) monitorDB() {
 					var event QueuedEvent
 					if err := json.Unmarshal(v, &event); err != nil {
 						logger.Printf("Unable to unmarshal event: %v", err)
-						d.deleteEventFromDB(eventID)
+						if err = d.deleteEventFromDB(eventID); err != nil {
+							logger.Printf("Error deleting event from DB: %v", err)
+						}
 						return nil
 					}
 
