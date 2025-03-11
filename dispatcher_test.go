@@ -133,7 +133,7 @@ func TestSendWebhook(t *testing.T) {
 			}
 
 			// Call sendWebhook
-			err := dispatcher.sendWebhook(server.URL, tc.payload)
+			err := dispatcher.sendWebhook(context.TODO(), server.URL, tc.payload)
 
 			// Check for error
 			if tc.expectError && err == nil {

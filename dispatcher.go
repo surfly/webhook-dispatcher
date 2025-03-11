@@ -191,7 +191,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	}
 
 	logger.Printf("Sending webhook to %s", event.URL)
-	err = d.sendWebhook(event.URL, jsonPayload)
+	err = d.sendWebhook(ctx, event.URL, jsonPayload)
 	if err != nil {
 		event.RetryCount++
 		logger.Printf("[attempt=%d] Unable to send [send_error=%s]", event.RetryCount, err)
@@ -328,7 +328,7 @@ func (d *WebhookDispatcher) monitorDB() {
 	}
 }
 
-func (d *WebhookDispatcher) sendWebhook(url string, payload []byte) error {
+func (d *WebhookDispatcher) sendWebhook(ctx context.Context, url string, payload []byte) error {
 	compressed := false
 	if len(payload) > compressionThreshold {
 		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
@@ -342,9 +342,9 @@ func (d *WebhookDispatcher) sendWebhook(url string, payload []byte) error {
 		compressed = true
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), d.reqTimeout)
+	reqCtx, cancel := context.WithTimeout(ctx, d.reqTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(reqCtx, "POST", url, bytes.NewBuffer(payload))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
