@@ -506,7 +506,7 @@ func TestHandleEvent(t *testing.T) {
 	}
 
 	// Create a test context
-	ctx := context.WithValue(context.Background(), "workerID", 0)
+	ctx := context.WithValue(context.Background(), workerIDKey, 0)
 
 	// Create and save a test event
 	eventID := "test_handle_event"
@@ -548,7 +548,7 @@ func TestHandleEventFailedSend(t *testing.T) {
 	}
 
 	// Create a test context
-	ctx := context.WithValue(context.Background(), "workerID", 0)
+	ctx := context.WithValue(context.Background(), workerIDKey, 0)
 
 	// Create and save a test event
 	eventID := "test_handle_event_failure"
