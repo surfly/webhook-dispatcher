@@ -128,8 +128,6 @@ The dispatcher uses a producer-consumer pattern:
 1. A monitoring goroutine (`monitorDB`) scans the database periodically for events that need to be processed
 2. Events are sent to a channel (`sendEventQueue`)
 3. Worker goroutines consume from this channel and process events
-4. Events to be deleted are sent to another channel (`deleteEventQueue`)
-5. A deletion goroutine processes this queue
 
 This model allows for controlled concurrency while preventing race conditions.
 
