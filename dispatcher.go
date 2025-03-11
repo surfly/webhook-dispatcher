@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -320,7 +321,7 @@ func (d *WebhookDispatcher) monitorDB() {
 				})
 			})
 
-			if err != nil && err != context.Canceled {
+			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.Printf("ERROR: Monitoring database: %v", err)
 			}
 		}
