@@ -1,0 +1,10 @@
+linters:
+  presets:
+    - bugs
+
+issues:
+  exclude-files:
+    - _test.go
+
+output:
+  show-stats: true
