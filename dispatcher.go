@@ -39,6 +39,10 @@ var (
 	compressionThreshold = 1024 // 1KB
 )
 
+type contextKey string
+
+var workerIDKey = contextKey("workerID")
+
 // WebhookDispatcher manages event delivery.
 type WebhookDispatcher struct {
 	db *bbolt.DB
@@ -124,7 +128,7 @@ func (d *WebhookDispatcher) Start() {
 	d.logger.Printf("Starting WebhookDispatcher with %d workers", d.concurrency)
 	for i := range d.concurrency {
 		d.wg.Add(1) // Increment the WaitGroup counter
-		ctx := context.WithValue(d.ctx, "workerID", i)
+		ctx := context.WithValue(d.ctx, workerIDKey, i)
 		go d.worker(ctx)
 	}
 	go d.monitorDB()
@@ -132,7 +136,7 @@ func (d *WebhookDispatcher) Start() {
 
 // worker processes webhook tasks.
 func (d *WebhookDispatcher) worker(ctx context.Context) {
-	workerID := ctx.Value("workerID").(int)
+	workerID := ctx.Value(workerIDKey).(int)
 	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[workerID=%d] ", d.logger.Prefix(), workerID), d.logger.Flags())
 	logger.Println("Worker started")
 	defer func() {
@@ -154,7 +158,7 @@ func (d *WebhookDispatcher) worker(ctx context.Context) {
 }
 
 func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
-	workerID := ctx.Value("workerID").(int)
+	workerID := ctx.Value(workerIDKey).(int)
 	logger := log.New(d.logger.Writer(), fmt.Sprintf("%s[workerID=%d] [eventID=%s] ", d.logger.Prefix(), workerID, eventID), d.logger.Flags())
 
 	logger.Printf("Processing event")
