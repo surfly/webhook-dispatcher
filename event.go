@@ -20,7 +20,7 @@ type QueuedEvent struct {
 	// RetrySchedule is the schedule for retrying this event.
 	// If this is empty, the event will be retried immediately. Valid values are
 	// durations in the format of Go's time.ParseDuration.
-	// For example, "1s", "1m", "1h", "1d", "1w", "1M", "1y".
+	// For example, "1s", "10m", "24h"
 	RetrySchedule []string `json:"retry_schedule"`
 }
 
