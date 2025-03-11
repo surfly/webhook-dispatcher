@@ -1,0 +1,27 @@
+name: CI Workflow
+
+on: [push]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install grm
+        run: >
+          curl -s https://api.github.com/repos/jsnjack/grm/releases/latest |
+          jq -r .assets[0].browser_download_url |
+          xargs curl -LOs &&
+          chmod +x grm &&
+          sudo mv grm /usr/local/bin/
+
+      - name: Install dependencies
+        run: grm install golangci/golangci-lint -y
+
+      - name: Run linters
+        run: golangci-lint run
+
+      - name: Run tests
+        run: go test ./... -v
