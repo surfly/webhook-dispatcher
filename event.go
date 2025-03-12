@@ -10,6 +10,9 @@ type QueuedEvent struct {
 	WebhookEvent
 	// URL is the webhook URL to which this event should be sent.
 	URL string `json:"url"`
+	// Headers are the headers to be sent with the webhook request. Useful for
+	// authentication or custom headers.
+	Headers map[string]string `json:"headers"`
 	// RetryCount is the number of times this event has been retried.
 	RetryCount int `json:"retry_count"`
 	// RetryAfter is the time after which this event should be retried.
@@ -25,10 +28,11 @@ type QueuedEvent struct {
 }
 
 // NewQueuedEvent creates a new QueuedEvent with the given event and URL.
-func NewQueuedEvent(event WebhookEvent, url string) *QueuedEvent {
+func NewQueuedEvent(event WebhookEvent, url string, headers map[string]string) *QueuedEvent {
 	return &QueuedEvent{
 		WebhookEvent:  event,
 		URL:           url,
+		Headers:       headers,
 		RetryCount:    0,
 		RetryAfter:    time.Now(),
 		MaxRetryCount: defaultMaxRetryCount,

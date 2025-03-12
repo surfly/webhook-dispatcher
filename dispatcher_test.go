@@ -133,7 +133,7 @@ func TestSendWebhook(t *testing.T) {
 			}
 
 			// Call sendWebhook
-			err := dispatcher.sendWebhook(context.TODO(), server.URL, tc.payload)
+			err := dispatcher.sendWebhook(context.TODO(), server.URL, nil, tc.payload)
 
 			// Check for error
 			if tc.expectError && err == nil {
@@ -145,6 +145,34 @@ func TestSendWebhook(t *testing.T) {
 		})
 	}
 }
+
+func TestSendWebhook_with_headers(t *testing.T) {
+	// Setup mock HTTP server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test_token" {
+			t.Errorf("Expected Authorization header to be %q, got %q", "Bearer test_token", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// Create a mock dispatcher
+	dispatcher := &WebhookDispatcher{
+		reqUserAgent: defaultUserAgent,
+		reqTimeout:   defaultReqTimeout,
+		logger:       log.New(io.Discard, "", 0),
+	}
+	headers := map[string]string{
+		"Authorization": "Bearer test_token",
+	}
+
+	// Call sendWebhook
+	err := dispatcher.sendWebhook(context.TODO(), server.URL, headers, []byte(`{"key": "value"}`))
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+}
+
 func TestNewWebhookDispatcher(t *testing.T) {
 	db := setupTestDB(t)
 	defer cleanupTestDB(t, db)
@@ -207,8 +235,9 @@ func TestQuickEnqueue(t *testing.T) {
 	url := "http://example.com/webhook"
 	category := "test_category"
 	data := map[string]string{"key": "value"}
+	headers := map[string]string{"Authorization": "Bearer test_token"}
 
-	err = dispatcher.QuickEnqueue(url, category, data)
+	err = dispatcher.QuickEnqueue(url, headers, category, data)
 	if err != nil {
 		t.Fatalf("Failed to enqueue event: %v", err)
 	}
@@ -228,6 +257,9 @@ func TestQuickEnqueue(t *testing.T) {
 			}
 			if event.Category != category {
 				t.Errorf("Expected category %q, got %q", category, event.Category)
+			}
+			if event.Headers["Authorization"] != headers["Authorization"] {
+				t.Errorf("Expected Authorization header %q, got %q", headers["Authorization"], event.Headers["Authorization"])
 			}
 			return nil
 		})
@@ -304,7 +336,7 @@ func TestEnqueueAndGetEventFromDB(t *testing.T) {
 		EventID:   eventID,
 	}
 
-	queuedEvent := NewQueuedEvent(event, url)
+	queuedEvent := NewQueuedEvent(event, url, nil)
 
 	// Test Enqueue
 	err = dispatcher.Enqueue(queuedEvent)
@@ -355,7 +387,7 @@ func TestStop(t *testing.T) {
 			CreatedAt: time.Now(),
 			Data:      map[string]interface{}{"test": "test"},
 		}
-		queuedEvent := NewQueuedEvent(*event, "http://example.com")
+		queuedEvent := NewQueuedEvent(*event, "http://example.com", nil)
 		err = dispatcher.Enqueue(queuedEvent)
 		if err != nil {
 			t.Fatalf("Failed to enqueue event: %v", err)
@@ -413,7 +445,7 @@ func TestContextCancellation(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent := NewQueuedEvent(*event, "http://example.com")
+	queuedEvent := NewQueuedEvent(*event, "http://example.com", nil)
 	err = dispatcher.Enqueue(queuedEvent)
 	if err != nil {
 		t.Fatalf("Failed to enqueue event: %v", err)
@@ -452,7 +484,7 @@ func TestDeleteEvent(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent := NewQueuedEvent(*event, "http://example.com")
+	queuedEvent := NewQueuedEvent(*event, "http://example.com", nil)
 	err = dispatcher.saveEventInDB(queuedEvent)
 	if err != nil {
 		t.Fatalf("Failed to save event: %v", err)
@@ -516,7 +548,7 @@ func TestHandleEvent(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent := NewQueuedEvent(*event, server.URL)
+	queuedEvent := NewQueuedEvent(*event, server.URL, nil)
 	err = dispatcher.saveEventInDB(queuedEvent)
 	if err != nil {
 		t.Fatalf("Failed to save event: %v", err)
@@ -558,7 +590,7 @@ func TestHandleEventFailedSend(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent := NewQueuedEvent(*event, server.URL)
+	queuedEvent := NewQueuedEvent(*event, server.URL, nil)
 	queuedEvent.RetrySchedule = []string{"0s", "1s"} // Short retry schedule
 	err = dispatcher.saveEventInDB(queuedEvent)
 	if err != nil {
@@ -609,7 +641,7 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent1 := NewQueuedEvent(*event1, "http://example.com")
+	queuedEvent1 := NewQueuedEvent(*event1, "http://example.com", nil)
 	queuedEvent1.RetryAfter = time.Now().Add(-1 * time.Second) // Ready to be sent
 	err = dispatcher.saveEventInDB(queuedEvent1)
 	if err != nil {
@@ -624,7 +656,7 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent2 := NewQueuedEvent(*event2, "http://example.com")
+	queuedEvent2 := NewQueuedEvent(*event2, "http://example.com", nil)
 	queuedEvent2.RetryAfter = time.Now().Add(-1 * time.Second) // Ready to be sent
 	err = dispatcher.saveEventInDB(queuedEvent2)
 	if err != nil {
@@ -641,7 +673,7 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEvent3 := NewQueuedEvent(*event3, "http://example.com")
+	queuedEvent3 := NewQueuedEvent(*event3, "http://example.com", nil)
 	queuedEvent3.RetryAfter = time.Now().Add(10 * time.Second) // Not ready yet
 	err = dispatcher.saveEventInDB(queuedEvent3)
 	if err != nil {
@@ -731,7 +763,7 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		CreatedAt: time.Now(),
 		Data:      map[string]interface{}{"test": "test"},
 	}
-	queuedEventPost := NewQueuedEvent(*eventPost, "http://example.com")
+	queuedEventPost := NewQueuedEvent(*eventPost, "http://example.com", nil)
 	queuedEventPost.RetryAfter = time.Now().Add(10 * time.Second) // Set to future time
 	err = dispatcher.saveEventInDB(queuedEventPost)
 	if err != nil {

@@ -39,7 +39,7 @@ func main() {
 	// Set up HTTP handlers.
 	http.HandleFunc("/gen/simple/", handleGenerateSimpleEvents)
 	log.Println("Starting server on :8000")
-	log.Fatal(http.ListenAndServe(":8000", nil))
+	log.Fatal(http.ListenAndServe(":8000", nil)) // nolint
 }
 
 // handleGenerateSimpleEvents handles HTTP requests to generate and enqueue simple webhook events.
@@ -61,6 +61,7 @@ func handleGenerateSimpleEvents(w http.ResponseWriter, r *http.Request) {
 		sleepMS, _ := rand.Int(rand.Reader, big.NewInt(2000))
 		err = D.QuickEnqueue(
 			fmt.Sprintf("http://localhost:8008/webhook/%d/?verbose=false&sleep=%dms", i, sleepMS),
+			nil,
 			"new_category",
 			map[string]any{"message": fmt.Sprintf("Event %d", i+1)},
 		)

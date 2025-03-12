@@ -59,6 +59,7 @@ func main() {
     // Queue a webhook
     err = d.QuickEnqueue(
         "https://example.com/webhook",
+        nil,
         "user.created",
         map[string]interface{}{"user_id": 123, "name": "Amy Pond"},
     )
@@ -85,6 +86,7 @@ There are two ways to enqueue events:
 ```go
 d.QuickEnqueue(
     "https://example.com/webhook",  // Destination URL
+    nil,                             // Optional headers (can be nil)
     "order.created",                // Event category/type
     orderData,                      // Event payload (any JSON-serializable data)
 )

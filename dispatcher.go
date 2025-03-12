@@ -193,7 +193,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 	}
 
 	logger.Printf("Sending webhook to %s", event.URL)
-	err = d.sendWebhook(ctx, event.URL, jsonPayload)
+	err = d.sendWebhook(ctx, event.URL, event.Headers, jsonPayload)
 	if err != nil {
 		event.RetryCount++
 		logger.Printf("[attempt=%d] Unable to send [send_error=%s]", event.RetryCount, err)
@@ -223,7 +223,7 @@ func (d *WebhookDispatcher) handleEvent(ctx context.Context, eventID string) {
 // - url - is the webhook URL to which this event should be sent.
 // - category - is the category of the event.
 // - data - is the data to be sent in the webhook payload. Should be JSON serializable.
-func (d *WebhookDispatcher) QuickEnqueue(url string, category string, data any) error {
+func (d *WebhookDispatcher) QuickEnqueue(url string, headers map[string]string, category string, data any) error {
 	// Generate a new time-ordered UUID
 	uuid, err := uuid.NewV7()
 	if err != nil {
@@ -237,7 +237,7 @@ func (d *WebhookDispatcher) QuickEnqueue(url string, category string, data any) 
 		EventID:   uuid.String(),
 	}
 
-	queuedEvent := NewQueuedEvent(event, url)
+	queuedEvent := NewQueuedEvent(event, url, headers)
 
 	return d.saveEventInDB(queuedEvent)
 }
@@ -336,7 +336,7 @@ func (d *WebhookDispatcher) monitorDB() {
 	}
 }
 
-func (d *WebhookDispatcher) sendWebhook(ctx context.Context, url string, payload []byte) error {
+func (d *WebhookDispatcher) sendWebhook(ctx context.Context, url string, headers map[string]string, payload []byte) error {
 	compressed := false
 	if len(payload) > compressionThreshold {
 		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
@@ -358,6 +358,14 @@ func (d *WebhookDispatcher) sendWebhook(ctx context.Context, url string, payload
 	}
 	req.Header.Set("User-Agent", d.reqUserAgent)
 	req.Header.Set("Content-Type", "application/json")
+
+	// Set custom headers
+	if headers != nil {
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
+	}
+
 	if compressed {
 		req.Header.Set("Content-Encoding", "zstd")
 	}
