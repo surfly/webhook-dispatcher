@@ -47,38 +47,52 @@ func cleanupTestDB(t *testing.T, db *bbolt.DB) {
 
 func TestSendWebhook(t *testing.T) {
 	testCases := []struct {
-		name             string
-		payload          []byte
-		responseStatus   int
-		compressPayload  bool
-		checkCompression bool
-		expectError      bool
-		checkHeaders     bool
+		name                     string
+		payload                  []byte
+		responseStatus           int
+		enableRequestCompression bool
+		payloadWasCompressed     bool
+		checkCompression         bool
+		expectError              bool
+		checkHeaders             bool
 	}{
 		{
-			name:            "successful request",
-			payload:         []byte(`{"key": "value"}`),
-			responseStatus:  http.StatusOK,
-			compressPayload: false,
-			expectError:     false,
-			checkHeaders:    true,
+			name:                     "successful request",
+			payload:                  []byte(`{"key": "value"}`),
+			responseStatus:           http.StatusOK,
+			enableRequestCompression: true,
+			payloadWasCompressed:     false,
+			expectError:              false,
+			checkHeaders:             true,
 		},
 		{
-			name:             "successful request with compression",
-			payload:          bytes.Repeat([]byte(`{"key": "value"}`), 500), // large payload to trigger compression
-			responseStatus:   http.StatusOK,
-			compressPayload:  true,
-			expectError:      false,
-			checkCompression: true,
-			checkHeaders:     true,
+			name:                     "successful request with compression",
+			payload:                  bytes.Repeat([]byte(`{"key": "value"}`), 500), // large payload to trigger compression
+			responseStatus:           http.StatusOK,
+			payloadWasCompressed:     true,
+			enableRequestCompression: true,
+			expectError:              false,
+			checkCompression:         true,
+			checkHeaders:             true,
 		},
 		{
-			name:            "unsuccessful request",
-			payload:         []byte(`{"key": "value"}`),
-			responseStatus:  http.StatusInternalServerError,
-			compressPayload: false,
-			expectError:     true,
-			checkHeaders:    true,
+			name:                     "successful request without compression",
+			payload:                  bytes.Repeat([]byte(`{"key": "value"}`), 500), // large payload to trigger compression
+			responseStatus:           http.StatusOK,
+			payloadWasCompressed:     false,
+			enableRequestCompression: false,
+			expectError:              false,
+			checkCompression:         false,
+			checkHeaders:             true,
+		},
+		{
+			name:                     "unsuccessful request",
+			payload:                  []byte(`{"key": "value"}`),
+			responseStatus:           http.StatusInternalServerError,
+			enableRequestCompression: true,
+			payloadWasCompressed:     false,
+			expectError:              true,
+			checkHeaders:             true,
 		},
 	}
 
@@ -127,9 +141,10 @@ func TestSendWebhook(t *testing.T) {
 
 			// Create a mock dispatcher
 			dispatcher := &WebhookDispatcher{
-				reqUserAgent: defaultUserAgent,
-				reqTimeout:   defaultReqTimeout,
-				logger:       log.New(io.Discard, "", 0),
+				reqUserAgent:    defaultUserAgent,
+				reqTimeout:      defaultReqTimeout,
+				logger:          log.New(io.Discard, "", 0),
+				compressRequest: tc.enableRequestCompression,
 			}
 
 			// Call sendWebhook
@@ -796,5 +811,51 @@ func TestMonitorDBComprehensive(t *testing.T) {
 		t.Errorf("Event %s should not have been sent to queue after restart", eventID)
 	case <-time.After(200 * time.Millisecond):
 		// No events sent, as expected
+	}
+}
+
+func Test_EnableCompression_default(t *testing.T) {
+	db := setupTestDB(t)
+	defer cleanupTestDB(t, db)
+
+	dispatcher, err := NewWebhookDispatcher(db, "")
+	if err != nil {
+		t.Fatalf("Failed to create WebhookDispatcher: %v", err)
+	}
+
+	if !dispatcher.compressRequest {
+		t.Errorf("Expected request compression to be enabled")
+	}
+}
+
+func Test_EnableCompression_off(t *testing.T) {
+	db := setupTestDB(t)
+	defer cleanupTestDB(t, db)
+
+	dispatcher, err := NewWebhookDispatcher(db, "")
+	if err != nil {
+		t.Fatalf("Failed to create WebhookDispatcher: %v", err)
+	}
+
+	dispatcher.EnableCompression(false)
+
+	if dispatcher.compressRequest {
+		t.Errorf("Expected request compression to be disabled")
+	}
+}
+
+func Test_EnableCompression_on(t *testing.T) {
+	db := setupTestDB(t)
+	defer cleanupTestDB(t, db)
+
+	dispatcher, err := NewWebhookDispatcher(db, "")
+	if err != nil {
+		t.Fatalf("Failed to create WebhookDispatcher: %v", err)
+	}
+
+	dispatcher.EnableCompression(true)
+
+	if !dispatcher.compressRequest {
+		t.Errorf("Expected request compression to be enabled")
 	}
 }
