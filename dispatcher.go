@@ -61,6 +61,10 @@ type WebhookDispatcher struct {
 	// number of events to process concurrently
 	concurrency int
 
+	// whether to compress the request body
+	// if true, the request body will be compressed using zstd
+	compressRequest bool
+
 	logger *log.Logger
 
 	sendEventQueue chan string
@@ -89,15 +93,16 @@ func NewWebhookDispatcher(db *bbolt.DB, bucketName string) (*WebhookDispatcher, 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	d := &WebhookDispatcher{
-		db:            db,
-		bucketName:    []byte(bucketName),
-		reqUserAgent:  defaultUserAgent,
-		concurrency:   defaultConcurrency,
-		reqTimeout:    defaultReqTimeout,
-		eventCooldown: defaultEventCooldown,
-		logger:        log.New(io.Discard, "", 0),
-		ctx:           ctx,
-		cancel:        cancel,
+		db:              db,
+		bucketName:      []byte(bucketName),
+		reqUserAgent:    defaultUserAgent,
+		concurrency:     defaultConcurrency,
+		reqTimeout:      defaultReqTimeout,
+		eventCooldown:   defaultEventCooldown,
+		logger:          log.New(io.Discard, "", 0),
+		ctx:             ctx,
+		cancel:          cancel,
+		compressRequest: true,
 	}
 	d.sendEventQueue = make(chan string, d.concurrency*2)
 	d.inProgress = sync.Map{}
@@ -122,6 +127,12 @@ func (d *WebhookDispatcher) SetConcurrency(c int) {
 // SetLogger sets the logger for the dispatcher.
 func (d *WebhookDispatcher) SetLogger(logger *log.Logger) {
 	d.logger = logger
+}
+
+// EnableCompression enables or disables request body compression.
+// If enabled, the request body will be compressed using zstd if its size exceeds compressionThreshold.
+func (d *WebhookDispatcher) EnableCompression(enabled bool) {
+	d.compressRequest = enabled
 }
 
 // Start is the entry point for the dispatcher. It starts the workers and monitors the database.
@@ -338,7 +349,7 @@ func (d *WebhookDispatcher) monitorDB() {
 
 func (d *WebhookDispatcher) sendWebhook(ctx context.Context, url string, headers map[string]string, payload []byte) error {
 	compressed := false
-	if len(payload) > compressionThreshold {
+	if d.compressRequest && len(payload) > compressionThreshold {
 		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 		if err != nil {
 			return fmt.Errorf("error creating zstd encoder: %w", err)
